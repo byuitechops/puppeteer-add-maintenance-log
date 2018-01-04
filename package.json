@@ -15,5 +15,8 @@
   "bugs": {
     "url": "https://github.com/byuitechops/puppeteer-add-maintenance-log/issues"
   },
-  "homepage": "https://github.com/byuitechops/puppeteer-add-maintenance-log#readme"
+  "homepage": "https://github.com/byuitechops/puppeteer-add-maintenance-log#readme",
+  "dependencies": {
+    "puppeteer": "^0.13.0"
+  }
 }
