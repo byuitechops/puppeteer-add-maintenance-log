@@ -1,0 +1,11 @@
+{
+  "name": "puppeteer-add-maintenance-log",
+  "version": "1.0.0",
+  "description": "add lti links into the master courses with puppeteer",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Joshua McKinney",
+  "license": "MIT"
+}
