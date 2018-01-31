@@ -5,16 +5,18 @@
 
 /*eslint no-console:0, no-unused-vars:0 */
 
-const password = process.env.PASS;
-const userName = process.env.NAME;
+const password = process.env.PASS || '';
+const userName = process.env.NAME || 'Set your user name as an environment variable';
 
 const puppeteer = require('puppeteer');
-const fs = require('fs');
+const chalk = require('chalk');
 const domain = 'byui';
-const login = `https://${domain}.brightspace.com/d2l/login?noredirect=true`;
+const loginURL = `https://${domain}.brightspace.com/d2l/login?noredirect=true`;
 
 
 
+//this function will tell the browser to wait until we get a url in the location that 
+//contains the url parameter.
 function waitURL(page, url) {
     return new Promise(async function(fullfil, reject) {
         try {
@@ -32,23 +34,75 @@ function waitURL(page, url) {
     });
 }
 
-function findElementWithTextParentId(selector, text) {
+//this logs in to the backdoor log in to D2L
+async function logIn(page) {
+    await page.goto(loginURL);
+    await page.type('#userName', userName);
+    await page.type('#password', password);
+    await page.click('[primary=primary]');
+    await waitURL(page, 'home');
+}
+
+//get list of courses
+function getCourseList(fileName) {
+    const fs = require('fs');
+    const dsv = require('d3-dsv');
+    return new Promise(function(f, r) {
+        fs.readFile(fileName, 'utf8', function(error, file) {
+            if (error) {
+                r(error);
+                return;
+            }
+            try {
+                //parse the csv and send it back
+                f(dsv.csvParse(file));
+            } catch (e) {
+                r(error);
+            }
+        });
+    });
+}
+
+function writeReport(fileName, data) {
+    const fs = require('fs');
+    const dsv = require('d3-dsv');
+    return new Promise(function(f, r) {
+        try {
+            data = dsv.csvFormat(data);
+        } catch (e) {
+            r(e);
+        }
+
+        fs.writeFile(fileName, data, 'utf8', function(error) {
+            if (error) {
+                r(error);
+                return;
+            }
+
+            f(true);
+        });
+    });
+}
+
+
+//this queries the page to find an element that matches the selector parameter
+//and returns the closest ancestor that has an id.
+//it is meant to be ran on in the browser with page.evaluate
+function findElementWithTextParentId(selector, text, message) {
     return new Promise(function(f, r) {
         try {
             var elements = Array.from(document.querySelectorAll(selector)),
                 element = elements.find((e) => e.innerText === text);
 
-            console.log('elements:', elements);
-            console.log('element:', element);
-
             if (typeof element === 'undefined') {
-                throw new Error('did not find an element with the selector: ' + selector);
+                throw new Error('Did not find an element with the selector: ' + selector + ' while: ' + message);
             }
             //climb the tree until you find an id
             while (element.id === '') {
                 element = element.parentElement;
             }
 
+            //send back the id
             f(element.id);
         } catch (error) {
             r(error);
@@ -57,14 +111,44 @@ function findElementWithTextParentId(selector, text) {
 }
 
 
+//it is meant to be ran on in the browser with page.evaluate
+function getCourseCode(course) {
+    return new Promise(function(f, r) {
+        try {
 
+            //get the course code from the link at the top of the page, name of the course
+            var link = document.querySelector('.d2l-navigation-s-header .d2l-navigation-s-link');
 
-function clickElementWithText(page, selector, text) {
+            if (typeof link === 'undefined') {
+                throw new Error(`Did not find the course code for course ${course.ou}`);
+            }
+
+            var code = link.getAttribute('title').match(/^[A-Z]+ +\d+\w?/);
+            if (Array.isArray(code)) {
+                code = code[0].replace(/\s+/, ' ');
+            } else {
+                throw new Error(`Could not parse the Course Code for course ${course.ou}`);
+            }
+
+            //send back the course code
+            f(code);
+        } catch (error) {
+            r(error);
+        }
+    });
+}
+
+//find the id we need and then send click the element
+//it is meant to be ran on in the browser with page.evaluate
+//this works because puppeteer actually moves some kind of mouse and clicks the center of the thing we tell it
+// that way we can usually just click on a parent and it will first click on a child.
+function clickElementWithText(page, selector, text, message) {
     return new Promise(async function(f, r) {
         try {
-            var id = await page.evaluate(findElementWithTextParentId, selector, text);
+            var id = await page.evaluate(findElementWithTextParentId, selector, text, message);
 
             await page.click(`#${id}`);
+            //tell them we are done or had an error
             f();
         } catch (error) {
             r(error);
@@ -73,22 +157,7 @@ function clickElementWithText(page, selector, text) {
     });
 }
 
-function logIn(page) {
-    return new Promise(async function(fullfil, reject) {
-        try {
 
-            await page.goto(login);
-            await page.type('#userName', userName);
-            await page.type('#password', password);
-            await page.click('[primary=primary]');
-            await waitURL(page, 'home');
-
-            fullfil();
-        } catch (error) {
-            reject(error);
-        }
-    });
-}
 
 //Not used but nice to capture the html of the body at a given instant
 function getHTML() {
@@ -98,14 +167,13 @@ function getHTML() {
 function getAddItemsId(page) {
     return new Promise(async function(fullfil, reject) {
         try {
-            var beforeLoadId = await page.evaluate(findElementWithTextParentId, 'span', 'Existing Activities');
+            var beforeLoadId = await page.evaluate(findElementWithTextParentId, 'span', 'Existing Activities', 'first click to Existing Activites');
             var afterLoadId = '';
             //loop every 100 milliseconds until the page changed the id - really dumb - have to do this because it some how loses focus and then can't keep going
             while (beforeLoadId === afterLoadId || afterLoadId === '') {
-                afterLoadId = await page.evaluate(findElementWithTextParentId, 'span', 'Existing Activities');
+                afterLoadId = await page.evaluate(findElementWithTextParentId, 'span', 'Existing Activities', 'clinking Existing Activities in loop');
                 await page.waitFor(100);
             }
-
 
             fullfil(afterLoadId);
         } catch (error) {
@@ -116,103 +184,119 @@ function getAddItemsId(page) {
 }
 
 
-
 function getPopUp(page) {
     return page.mainFrame().childFrames()[0];
 }
 
 
-function setUpCourse(page) {
-    var moduleName = 'log';
-    var course = {
-        id: 10011,
-        code: 'FDAMF 101'
-    }; 
 
-    return new Promise(async function(fullfil, reject) {
+//this function actually adds the log
+async function makeLog(page, course) {
+    //then click the add Items Button
+    await page.click(`[title="Add activities to Instructor Resources"]`);
+
+    //click on the External learning Tools item
+    await clickElementWithText(page, 'span', 'External Learning Tools', 'clicking Ext Learning Tools Dropdown');
+
+
+    //wait for the popup 
+    var count = 0;
+    var metMaxCount = false;
+    do {
+        var popUpFrame = getPopUp(page);
+        count += 1;
+        metMaxCount = count > 10;
+        await page.waitFor(300);
+    } while (typeof popUpFrame === 'undefined' && !metMaxCount);
+
+    //throw if we ran out of tries
+    if (metMaxCount) {
+        throw new Error(`Could not find the popup after many tries for course ${course.ou}`);
+    }
+
+    //make sure there is a button there
+    await popUpFrame.waitForSelector('.d2l-quicklinkselector-add button');
+
+    // this keeps clicking the button until it works up to 10 tries
+    var worked = false;
+    var button;
+    do {
         try {
-
-            await page.goto(`https://byui.brightspace.com/d2l/le/content/${course.id}/Home`);
-            //click the correct module
-            await clickElementWithText(page, '[id^="TreeItem"] div:first-child', moduleName);
-
-            //wait for load and then click the add Items Button
-            var addItemsButtonId = await getAddItemsId(page);
-            await page.click(`#${addItemsButtonId}`);
-
-            //click on the External learning Tools item
-            await clickElementWithText(page, 'span', 'External Learning Tools');
-
-
-            //wait for the popup 
-            var count = 0;
-            var metMaxCount = false;
-            do {
-                var popUpFrame = getPopUp(page);
-                count += 1;
-                metMaxCount = count < 10;
-                await page.waitFor(300);
-            } while (typeof popUpFrame === 'undefined' && metMaxCount);
-
-            //throw if we ran out of tries
-            if (metMaxCount) {
-                throw new Error(`Could not find the popup after many tries for course ${course.id}`);
-            }
-
-            //make sure there is a button there
-            await popUpFrame.waitForSelector('.d2l-quicklinkselector-add button');
-
-            // this keeps clicking the button until it works up to 10 tries
-            var worked = false;
-            var button;
-            do {
-                try {
-                    button = await popUpFrame.$('.d2l-quicklinkselector-add button');
-                    //seems to work but worried that ^^^ will use all the tries
-                    await button.click();
-                    //wait for the slide over to new form by waiting till there is only one button to click
-                    await popUpFrame.waitForFunction('document.querySelectorAll(\'button[primary=primary]\').length === 1', {
-                        timeout: 500
-                    });
-                    worked = true;
-                } catch (error) {
-                    console.log('cant click yet');
-                    console.error(error);
-                    count += 1;
-                    if (count > 10) {
-                        throw new Error(`Tried ten times to click the .d2l-quicklinkselector-add button button for course ${course.id}`);
-                    }
-                }
-            } while (!worked && count < 10);
-
-
-            //get the tile field
-            var title = await popUpFrame.$('#itemData\\$title');
-            await title.type('Course Maintenance Log');
-
-
-            //fill in the url
-            var url = await popUpFrame.$('#itemData\\$url');
-            await url.type(`https://web.byui.edu/iLearn/LTI/TDReporting/Home/TDReport/?course=${course.code}`);
-
-
-            // click it
-            var doneButton = await popUpFrame.$('button[primary=primary]');
-            await doneButton.click();
-
-
-
-            fullfil();
+            button = await popUpFrame.$('.d2l-quicklinkselector-add button');
+            //seems to work but worried that ^^^ will use all the tries
+            await button.click();
+            //wait for the slide over to new form by waiting till there is only one button to click
+            await popUpFrame.waitForFunction('document.querySelectorAll(\'button[primary=primary]\').length === 1', {
+                timeout: 500
+            });
+            worked = true;
         } catch (error) {
-            reject(error);
+            // console.log('cant click yet');
+            // console.error(error);
+            count += 1;
+            if (count > 10) {
+                throw new Error(`Tried ten times to click the .d2l-quicklinkselector-add button button for course ${course.ou}`);
+            }
         }
-    });
+    } while (!worked && count < 10);
+
+
+    //get the tile field
+    var title = await popUpFrame.$('#itemData\\$title');
+    await title.type('Course Maintenance Log');
+
+
+    //fill in the url
+    var url = await popUpFrame.$('#itemData\\$url');
+    await url.type(`https://web.byui.edu/iLearn/LTI/TDReporting/Home/TDReport/?course=${course.code}`);
+
+
+    // click it
+    var doneButton = await popUpFrame.$('button[primary=primary]');
+    await doneButton.click();
+
+    //check that it worked
+    await page.waitForSelector('.d2l-flash-message-text[data-message-text="Topics saved successfully"]');
 }
 
 
+async function setUpCourse(page, course) {
+    var moduleName = 'Instructor Resources',
+        currentLogId = null;
 
-(async() => {
+    //go to the course content view
+    await page.goto(`https://byui.brightspace.com/d2l/le/content/${course.ou}/Home`);
+
+    //wait for the link on the top of the page
+    // await page.waitForSelector('.d2l-navigation-s-header .d2l-navigation-s-link');
+
+    //get the course code
+    course.code = await page.evaluate(getCourseCode, course);
+
+
+    //click the correct module and wait for page to change
+    const [response] = await Promise.all([
+        page.waitForSelector(`[title="Add activities to ${moduleName}"]`), 
+        clickElementWithText(page, '[id^="TreeItem"] div:first-child', moduleName, 'clicking module button')
+    ]);
+
+    //wait for load after click to module
+    // var addItemsButtonId = await getAddItemsId(page);
+
+    //add the log
+    await makeLog(page, course);
+
+    //pass that back it worked
+    return true;
+}
+
+(async () => {
     try {
+
+        //get the course list
+        var courseList = await getCourseList('addLogForOnesMissing.csv'),
+            courseListOut = [],
+            course, i;
 
         const browser = await puppeteer.launch({
             headless: false
@@ -228,11 +312,39 @@ function setUpCourse(page) {
 
         console.log(page.url());
 
-        //go to course
-        await setUpCourse(page);
+        //do all the courses
+        for (i = 0; i < courseList.length; ++i) {
+            course = courseList[i];
+            try {
+                console.log('Starting:', course.name, 'id:', course.ou, 'count:', i, 'percent:', ((i + 1) / courseList.length * 100).toFixed(2) + '%');
+                //set up the course
+                var itWorked = await setUpCourse(page, course);
 
+                //tell the world
+                console.log(chalk.green('worked!'));
+
+                //record that this course wroked
+                course.worked = true;
+
+            } catch (e) {
+                //tell the world
+                console.log(chalk.red('Error:', e.message));
+                //record the error
+                course.error = e.message;
+            }
+        }
+
+
+        console.log('courseList:', courseList);
+
+        //write out the report
+        await writeReport(`courseListReport${Date.now()}.csv`, courseList);
+
+
+        await browser.close();
 
     } catch (e) {
+        console.log('In outer catch.');
         console.error(e);
     }
     //await browser.close();
