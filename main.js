@@ -5,13 +5,22 @@
 
 /*eslint no-console:0, no-unused-vars:0 */
 
+//Settings
+const isBYUI = false;
+const filePart = 'JuliesOuListPathway';
+
+
+//Constants 
+const subDomain = isBYUI ? 'byui' : 'pathway';
 const password = process.env.PASS || '';
 const userName = process.env.NAME || 'Set your user name as an environment variable';
+const filenameIn = filePart + '.csv';
+const filenameOut = `report_${filePart}_${Date.now()}.csv`;
+const loginURL = `https://${subDomain}.brightspace.com/d2l/login?noredirect=true`;
 
+//Libraries
 const puppeteer = require('puppeteer');
 const chalk = require('chalk');
-const domain = 'byui';
-const loginURL = `https://${domain}.brightspace.com/d2l/login?noredirect=true`;
 
 
 
@@ -248,7 +257,8 @@ async function makeLog(page, course) {
 
     //fill in the url
     var url = await popUpFrame.$('#itemData\\$url');
-    await url.type(`https://web.byui.edu/iLearn/LTI/TDReporting/Home/TDReport/?course=${course.code}`);
+    var ltiUrl = `https://web.byui.edu/iLearn/LTI/TDReporting/Home/TDReport/?course=${course.code}` + isBYUI ? '' : ' Pathway';
+    await url.type(ltiUrl);
 
 
     // click it
@@ -265,7 +275,7 @@ async function setUpCourse(page, course) {
         currentLogId = null;
 
     //go to the course content view
-    await page.goto(`https://byui.brightspace.com/d2l/le/content/${course.ou}/Home`);
+    await page.goto(`https://${subDomain}.brightspace.com/d2l/le/content/${course.ou}/Home`);
 
     //wait for the link on the top of the page
     // await page.waitForSelector('.d2l-navigation-s-header .d2l-navigation-s-link');
@@ -276,7 +286,7 @@ async function setUpCourse(page, course) {
 
     //click the correct module and wait for page to change
     const [response] = await Promise.all([
-        page.waitForSelector(`[title="Add activities to ${moduleName}"]`), 
+        page.waitForSelector(`[title="Add activities to ${moduleName}"]`),
         clickElementWithText(page, '[id^="TreeItem"] div:first-child', moduleName, 'clicking module button')
     ]);
 
@@ -294,7 +304,7 @@ async function setUpCourse(page, course) {
     try {
 
         //get the course list
-        var courseList = await getCourseList('addLogForOnesMissing.csv'),
+        var courseList = await getCourseList(filenameIn),
             courseListOut = [],
             course, i;
 
@@ -338,7 +348,7 @@ async function setUpCourse(page, course) {
         console.log('courseList:', courseList);
 
         //write out the report
-        await writeReport(`courseListReport${Date.now()}.csv`, courseList);
+        await writeReport(filenameOut, courseList);
 
 
         await browser.close();
