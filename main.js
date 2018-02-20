@@ -1,7 +1,13 @@
 //to set env vars use the pattern "set VARNAME=VALUE" in cmd before you run "node main.js" 
 //then clear so its not there
-//set PASS=password in the cmd 
-//set NAME=username in the cmd 
+
+/* in cmd */
+//set PASS=password
+//set NAME=username
+
+/* in powershell */
+//$env:NAME = "username"
+//$env:PASS = "password"
 
 /*eslint no-console:0, no-unused-vars:0 */
 
